@@ -1,0 +1,9 @@
+services:
+  synapse_elife_studio:
+    build: .
+    working_dir: /app
+    volumes:
+      - ./src:/app
+    environment:
+      - GKS_WSTYPE=png
+    command: xvfb-run --server-args="-screen 0 1920x1080x24" julia --project=@. app_bonito_vf.jl

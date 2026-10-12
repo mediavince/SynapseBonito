@@ -1,5 +1,3 @@
-# Synapse E-Life Studio
-
 # SynapseBonito
 
 SynapseElife Studio — Interactive GUI  (v6 — tabbed layout)
@@ -78,3 +76,23 @@ juliaup default 1.11      # set as default
 juliaup update            # update to latest patch
 
 Key rule: never have more than one Julia source on your PATH. If you had Chocolatey's Julia before, choco uninstall julia -y first (as you already did), then install juliaup. The juliaup shim lives in WindowsApps and won't conflict with anything else.
+
+## CI/CD
+
+use the formatter before pushing
+
+For formatting, don't do it by hand — use JuliaFormatter:
+
+julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
+julia -e 'using JuliaFormatter; format_file("app_bonito_vf.jl")'
+
+Or for the whole project:
+
+julia -e 'using JuliaFormatter; format_dir(".")'
+
+This will fix all the inconsistent indentation (your script mixes 4-space, 8-space, and tab indentation in places). Add a .JuliaFormatter.toml to your project root to lock the style:
+
+indent = 4
+margin = 120
+
+Then format_dir("src") will produce consistent output.
