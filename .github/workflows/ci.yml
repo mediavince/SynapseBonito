@@ -12,14 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/julia-format@v3
         with:
-          version: '1.11'
-      - uses: julia-actions/cache@v2
-      - name: Install JuliaFormatter
-        run: julia -e 'import Pkg; Pkg.add("JuliaFormatter")'
-      - name: Check formatting
-        run: julia -m JuliaFormatter --check -v src/
+          version: '2'
 
   build:
     name: Build Docker image
