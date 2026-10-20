@@ -37,8 +37,8 @@
 
 using Pkg
 Pkg.activate(@__DIR__)
-Pkg.instantiate()
-Pkg.resolve()
+#Pkg.instantiate()
+#Pkg.resolve()
 
 using Revise,
     SynapseElife,
@@ -1857,7 +1857,7 @@ const PORT = parse(Int, get(ENV, "JULIA_PORT", "8081"))
 
 @info "Starting server on $HOST:$PORT"
 app = build_app()
-server = Bonito.Server(app, HOST, PORT)
+server = Bonito.Server(app, HOST, PORT; proxy_url = get(ENV, "PUBLIC_URL", "http://localhost:$PORT"))
 Bonito.HTTPServer.start(server)
 @info "Server started. Press Ctrl+C to stop."
 wait(server)

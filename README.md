@@ -33,66 +33,122 @@ CairoMakie (server-side) is used exclusively for file export.
 
 Tabular data and simulation results are exported as timestamped .xlsx files.
 
-## DEV
 
-# Pre-requisite
+## Run with Docker Compose
 
-```shell
-winget install --name Julia --id 9NJNWW8PVKMN -e -s msstore
-```
+Requirements: Docker Engine with Docker Compose v2, or Docker Desktop.
 
-# Launch Program locally
+Run these commands from the repository root:
 
 ```shell
-julia --project=@. app_bonito_vf.jl
+docker compose up -d --build
+docker compose logs -f --tail 50 synapse_elife_studio
 ```
- or
+
+Wait for `Server started`, then open http://localhost:8081.
+
+The image uses Julia 1.11.9. Dependencies are installed from
+`src/Project.toml` and `src/Manifest.toml` and precompiled during the build.
+The first build may take several minutes.
+
+Press Ctrl+C to stop following logs; the application keeps running.
+
+### Stop and restart
+
 ```shell
-julia --project=@synapsebonito app_bonito_vf.jl
+docker compose stop
+docker compose start
 ```
 
-## NB
+To rebuild after changing application files:
 
-juliaup is the official recommended method — it's the only approach the Julia docs endorse, and it avoids all the Chocolatey problems (PATH conflicts, stale versions, no easy switching). 
+```shell
+docker compose up -d --build
+```
 
-Install (one-liner):
+Application code is included in the image, so source changes require a rebuild.
 
-winget install --name Julia --id 9NJNWW8PVKMN -e -s msstore
+### Exported files
 
-This installs juliaup (the version manager) from the Microsoft Store, which automatically pulls the latest stable Julia.  No PATH edits, no Chocolatey, no conflicts.
+The export buttons write Excel and PNG files to `/app/exports`.
+This directory uses the persistent Docker volume `synapse_exports`.
+Files are not automatically downloaded by the browser.
 
-Why it's better than the alternatives:
+To copy exports to the host:
 
-Method	Problem
-Chocolatey (choco install julia)	Puts julia.exe in C:\ProgramData\chocolatey\bin\ — conflicts with any other Julia on PATH, pins to whatever version choco last updated, no easy version switching
-Manual installer (.exe from julialang.org)	Works, but you manually re-download + re-install for every upgrade, and the PATH entry is tied to a specific version folder
-juliaup ✅	Single shim on PATH (WindowsApps\julia.exe), manages multiple versions, juliaup update upgrades in-place, juliaup add 1.11 / juliaup default 1.11 for pinning
+```shell
+mkdir -p exports-recuperes
+docker compose cp synapse_elife_studio:/app/exports/. ./exports-recuperes/
+```
 
-After installing, manage versions with:
+The volume survives container replacement and `docker compose down`.
+Do not use `docker compose down -v` unless you intend to delete the exports.
 
-juliaup list              # show installed versions
-juliaup add 1.11          # install a specific version
-juliaup default 1.11      # set as default
-juliaup update            # update to latest patch
+## Remote deployment
 
-Key rule: never have more than one Julia source on your PATH. If you had Chocolatey's Julia before, choco uninstall julia -y first (as you already did), then install juliaup. The juliaup shim lives in WindowsApps and won't conflict with anything else.
+The default Compose configuration exposes the application only on the
+host's loopback address, `127.0.0.1:8081`.
 
-## CI/CD
+For remote access, configure an HTTPS reverse proxy and set `PUBLIC_URL`
+to the address used by visitors. For example, create a `.env` file in the
+repository root:
 
-use the formatter before pushing
+```dotenv
+PUBLIC_URL=https://synapse.example.org
+```
 
-For formatting, don't do it by hand — use JuliaFormatter:
+Then apply the configuration:
 
-julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
-julia -e 'using JuliaFormatter; format_file("app_bonito_vf.jl")'
+```shell
+docker compose up -d --build
+```
 
-Or for the whole project:
+The reverse proxy must forward HTTP requests, static assets and WebSocket
+connections to the application. A proxy running directly on the same host
+can forward to `http://127.0.0.1:8081`.
 
-julia -e 'using JuliaFormatter; format_dir(".")'
+`JULIA_HOST` and `JULIA_PORT` control the listener inside the container.
+`PUBLIC_URL` controls the external address advertised by Bonito.
+Using `localhost` as the public URL will not work for remote visitors.
 
-This will fix all the inconsistent indentation (your script mixes 4-space, 8-space, and tab indentation in places). Add a .JuliaFormatter.toml to your project root to lock the style:
+Build and test the image for the target server's CPU architecture.
+Successful testing on a local machine does not validate a remote deployment.
 
-indent = 4
-margin = 120
+## Run locally without Docker
 
-Then format_dir("src") will produce consistent output.
+With Juliaup installed, install the matching Julia version:
+
+```shell
+juliaup add 1.11.9
+```
+
+From the repository root, install dependencies once and launch:
+
+```shell
+cd src
+julia +1.11.9 --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+julia +1.11.9 --project=. app_bonito_vf.jl
+```
+
+Open http://localhost:8081. Stop any Docker instance using this port first.
+
+Repeat dependency installation after changes to Project.toml or Manifest.toml.
+
+## Validation and CI
+
+The GitHub Actions workflow checks formatting, builds the Docker image
+on Linux and checks that the application returns a non-empty HTTP page.
+Application logs are collected, including when the startup check fails.
+
+This HTTP check does not validate browser interactions or simulations.
+
+Before deploying, manually check:
+
+- Graphs appear and controls respond.
+- A simulation completes and displays its results.
+- Excel and PNG exports are generated and can be retrieved.
+- The application works after a restart.
+- Exports survive container replacement.
+
+Multi-user capacity, resource limits, access control and the target
+server's HTTPS/WebSocket configuration require separate validation.

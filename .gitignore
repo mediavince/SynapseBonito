@@ -41,3 +41,6 @@ plots_/
 .DS_Store
 Manifest.toml
 .env
+
+# Conserver les versions des dependances de l'application
+!src/Manifest.toml
