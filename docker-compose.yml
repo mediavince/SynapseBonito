@@ -1,9 +1,20 @@
 services:
   synapse_elife_studio:
     build: .
+    image: synapsebonito:repro
+    init: true
     working_dir: /app
-    volumes:
-      - ./src:/app
+
     environment:
-      - GKS_WSTYPE=png
-    command: xvfb-run --server-args="-screen 0 1920x1080x24" julia --project=@. app_bonito_vf.jl
+      JULIA_HOST: "0.0.0.0"
+      JULIA_PORT: "8081"
+      PUBLIC_URL: "${PUBLIC_URL:-http://localhost:8081}"
+
+    ports:
+      - "127.0.0.1:8081:8081"
+
+    volumes:
+      - synapse_exports:/app/exports
+
+volumes:
+  synapse_exports:

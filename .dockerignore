@@ -1,0 +1,11 @@
+.git/
+.env
+.DS_Store
+**/.DS_Store
+
+# Resultats locaux
+src/exports/
+exports-recuperes/
+
+# Copies utilisees pour la verification
+verification-deploiement/

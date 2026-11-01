@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   format:
     name: Check formatting
@@ -17,23 +20,40 @@ jobs:
           version: '2'
 
   build:
-    name: Build Docker image
+    name: Build Docker image and check startup
     runs-on: ubuntu-latest
     needs: format
+    timeout-minutes: 60
+
     steps:
       - uses: actions/checkout@v4
-      - name: Build
+
+      - name: Build image
+        run: docker compose build
+
+      - name: Start application
+        run: docker compose up -d --no-build
+
+      - name: Wait for application
         run: |
-          docker build \
-            --build-arg DOMAIN=${{ vars.DOMAIN }} \
-            --build-arg NGINX_PORT=${{ vars.NGINX_PORT }} \
-            --build-arg JULIA_PORT=${{ vars.JULIA_PORT }} \
-            --build-arg SSL_CERT=${{ vars.SSL_CERT }} \
-            --build-arg SSL_KEY=${{ vars.SSL_KEY }} \
-            -t synapsebonito:latest .
-      - name: Smoke test
-        run: |
-          docker run -d --name synapsebonito -p 8080:80 synapsebonito:latest
-          sleep 10
-          curl -sf http://localhost:8080/ > /dev/null && echo "OK" || echo "FAIL"
-          docker stop synapsebonito
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 30 \
+            --retry-delay 5 \
+            --retry-connrefused \
+            --retry-max-time 300 \
+            --max-time 30 \
+            http://localhost:8081/ \
+            --output /tmp/synapsebonito.html
+
+          test -s /tmp/synapsebonito.html
+
+      - name: Show application logs
+        if: always()
+        run: docker compose logs --no-color --tail 200
+
+      - name: Stop application
+        if: always()
+        run: docker compose down
