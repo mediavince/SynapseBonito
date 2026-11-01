@@ -443,18 +443,18 @@ function format_table(dp, selected_idx = 1)
     headers = [
         Bonito.DOM.th(
             string(name),
-            style = "position:sticky;top:0;background-color:#2c3e50;" *
-                    "color:white;padding:8px;border:1px solid #ddd;z-index:10;",
+            style = "position:sticky;top:0;background-color:#f1f5f9;color:#334155;" *
+                    "padding:8px;border-bottom:2px solid #cbd5e1;z-index:10;",
         ) for name in names(df)
     ]
     thead = Bonito.DOM.thead(Bonito.DOM.tr(headers...))
 
     rows = map(enumerate(eachrow(df))) do (i, row)
-        bg = i == selected_idx ? "#dbeafe" : (iseven(i) ? "#f9f9f9" : "#ffffff")
+        bg = i == selected_idx ? "#dbeafe" : "#ffffff"
         fw = i == selected_idx ? "bold" : "normal"
         col = i == selected_idx ? "#1e40af" : "black"
         cells = [
-            Bonito.DOM.td(string(val), style = "padding:6px 8px;border:1px solid #ddd;white-space:nowrap;") for
+            Bonito.DOM.td(string(val), style = "padding:6px 8px;border-bottom:1px solid #eef2f7;white-space:nowrap;") for
             val in row
         ]
         Bonito.DOM.tr(
@@ -470,11 +470,12 @@ function format_table(dp, selected_idx = 1)
 end
 
 # Runs the same simulation n_runs times independently.
-function run_batch!(n_runs, p_bar, plasticity_obs, final_wc, batch_results, all_run_curves, sim_fn)
+function run_batch!(n_runs, p_bar, plasticity_obs, final_wc, batch_results, all_run_curves, sim_fn; on_run = nothing)
     results = Float64[]
     all_run_curves[] = []
 
     for run = 1:n_runs
+        on_run === nothing || on_run(run, n_runs)
         plasticity_obs[] = (t = zeros(1), camk2 = zeros(1), can = zeros(1), weight = zeros(1))
         p_bar[] = 0.0
         println("Run $run / $n_runs ...")
@@ -528,6 +529,87 @@ function make_timeline_svg(pre_times::Vector{Float64}, post_times::Vector{Float6
     )
 end
 
+# "mm:ss", or "h:mm:ss" from one hour on.
+function fmt_elapsed(seconds::Real)
+    s = max(0, round(Int, seconds))
+    h, r = divrem(s, 3600)
+    m, sec = divrem(r, 60)
+    mmss = string(lpad(m, 2, '0'), ":", lpad(sec, 2, '0'))
+    return h > 0 ? string(h, ":", mmss) : mmss
+end
+
+# ── File downloads ───────────────────────────────────────────────────────────
+# Files are served through /download/<token>/<filename>. Only registered files
+# can be fetched; the token is random, there is no directory listing.
+const DOWNLOADS = Dict{String,String}()          # token => absolute file path
+const DOWNLOADS_LOCK = ReentrantLock()
+const DOWNLOAD_BASE_PATH = Ref("")               # path prefix of PUBLIC_URL
+
+# "https://host/synapse/" -> "/synapse", "https://host" -> ""
+function public_base_path(url::AbstractString)
+    m = match(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/]+(/.*)?$", url)
+    (m === nothing || m.captures[1] === nothing) && return ""
+    return rstrip(m.captures[1], '/')
+end
+
+function register_download(path::AbstractString)
+    token = Random.randstring(Random.RandomDevice(), ['a':'z'; 'A':'Z'; '0':'9'], 32)
+    lock(DOWNLOADS_LOCK) do
+        DOWNLOADS[token] = abspath(path)
+    end
+    return string(DOWNLOAD_BASE_PATH[], "/download/", token, "/", basename(path))
+end
+
+function download_handler(context)
+    token = String(context.match.captures[1])
+    path = lock(DOWNLOADS_LOCK) do
+        get(DOWNLOADS, token, nothing)
+    end
+    if path === nothing || !isfile(path)
+        return Bonito.HTTPServer.HTTP.Response(404, "File not found")
+    end
+    headers = [
+        "Content-Type" => Bonito.file_mimetype(path),
+        "Content-Disposition" => "attachment; filename=\"$(basename(path))\"",
+        "Cache-Control" => "no-store",
+    ]
+    return Bonito.HTTPServer.HTTP.Response(200, headers, read(path))
+end
+
+# ── Run-status banner (CSS) ──────────────────────────────────────────────────
+const STATUS_CSS = """
+.se-banner{display:none;position:sticky;top:0;z-index:20;align-items:center;gap:14px;padding:12px 18px;margin-bottom:12px;border-radius:10px;font-family:Segoe UI,sans-serif;font-size:14px;box-shadow:0 3px 10px rgba(0,0,0,0.15)}
+.se-running{display:flex;background:#fff7e0;border:1px solid #f5c04a;color:#7a4b00}
+.se-done{display:flex;background:#e8f7ee;border:1px solid #7ccf9b;color:#14532d}
+.se-stopped{display:flex;background:#eef2f7;border:1px solid #aab4c3;color:#334155}
+.se-error{display:flex;background:#fdecec;border:1px solid #e89a9a;color:#7f1d1d}
+.se-spinner{display:none;flex-shrink:0;width:22px;height:22px;border:3px solid #f5c04a;border-top-color:transparent;border-radius:50%;animation:se-spin 0.9s linear infinite}
+.se-running .se-spinner{display:block}
+@keyframes se-spin{to{transform:rotate(360deg)}}
+.se-main{flex:1;min-width:0}
+.se-title{font-weight:700}
+.se-sub{font-size:12px;opacity:0.85}
+.se-hint{display:none;font-size:12px;font-style:italic;margin-top:2px}
+.se-bar{display:none;width:100%;height:8px;margin-top:6px;accent-color:#e67e22}
+.se-running .se-bar{display:block}
+.se-elapsed{font-variant-numeric:tabular-nums;font-weight:700;font-size:20px}
+button:disabled{opacity:0.45;cursor:not-allowed}
+body{margin:0;background:#f0f2f5}
+.se-page{box-sizing:border-box;min-height:100vh;max-width:1300px;margin:0 auto;padding:clamp(10px,3vw,32px);font-family:Segoe UI,system-ui,sans-serif}
+.se-page h1{font-size:clamp(20px,6vw,30px)}
+.se-page button{min-width:0;border-radius:8px;white-space:nowrap}
+.se-page button:hover{filter:brightness(0.95)}
+.se-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.se-tools button:nth-child(1){background:#27ae60;color:#fff}
+.se-tools button:nth-child(2){background:#c0392b;color:#fff}
+.se-plots{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:14px}
+.se-card{min-width:0;overflow:hidden;background:#fff;border-radius:12px;box-shadow:0 3px 10px rgba(0,0,0,0.09)}
+.se-tabs{display:flex;gap:6px;padding:4px;margin-bottom:12px;background:#e2e8f0;border-radius:12px;overflow-x:auto}
+.se-tabs button{flex:1 0 auto;margin:0;padding:8px 14px;border:none;background:transparent;color:#475569;box-shadow:none}
+.se-tabs button:hover{background:#cbd5e1}
+.se-tabs.on-hfs button:nth-child(1),.se-tabs.on-tbs button:nth-child(2),.se-tabs.on-stdp_manual button:nth-child(3),.se-tabs.on-protocol button:nth-child(4){background:#2c3e50;color:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.25)}
+"""
+
 # =============================================================================
 #  SECTION 4 — BONITO APPLICATION
 # =============================================================================
@@ -549,12 +631,27 @@ function build_app(; fontsize = 20)
 
         active_tab = Observable("hfs")
 
+        # ── RUN STATUS (drives the banner and the toolbar buttons) ────────────
+        running = Observable(false)
+        not_running = map(!, running)
+        stop_requested = Ref(false)
+        run_state = Observable("idle")          # idle | running | done | stopped | error
+        run_title = Observable("")
+        run_detail = Observable("")
+        timer_cmd = Observable("stop")          # "start" / "stop": client-side clock
+        banner_class = map(s -> "se-banner se-" * s, run_state)
+        pct_text = map(p -> "Progress: $(round(Int, clamp(p, 0, 100))) %", p_bar)
+
+        # ── EXPORT STATUS ─────────────────────────────────────────────────────
+        export_status = Observable("")
+        export_links = Observable{Any}(Bonito.DOM.div())
+        export_entries = Tuple{String,String}[]  # (file name, download url), newest first
         # ── GLOBAL TOOLBAR WIDGETS ────────────────────────────────────────────
-        btn_run = Bonito.Button("▶  Run")
-        btn_stop = Bonito.Button("■  Stop")
-        btn_era = Bonito.Button("✕  Erase")
-        btn_csv = Bonito.Button("Export Excel")
-        btn_plt = Bonito.Button("Export Plots")
+        btn_run = Bonito.Button("▶  Run"; disabled = running)
+        btn_stop = Bonito.Button("■  Stop"; disabled = not_running)
+        btn_era = Bonito.Button("✕  Erase"; disabled = running)
+        btn_csv = Bonito.Button("Export Excel"; disabled = running)
+        btn_plt = Bonito.Button("Export Plots"; disabled = running)
         tb_n_runs = Bonito.TextField("1")
 
         # ── TAB BUTTONS ───────────────────────────────────────────────────────
@@ -663,10 +760,10 @@ function build_app(; fontsize = 20)
         end
 
         # ── WGLMAKIE FIGURES ──────────────────────────────────────────────────
-        fig = Figure(; size = (1100, 650), fontsize)
+        f_camk, f_phase, f_wt = [Figure(; size = (400, 340), fontsize) for _ = 1:3]
 
         ax_camk = Axis(
-            fig[1, 1];
+            f_camk[1, 1];
             xlabel = "time (s)",
             ylabel = "μM",
             title = "CaMKII & CaN",
@@ -679,7 +776,7 @@ function build_app(; fontsize = 20)
         xlims!(ax_camk, 0, 200)
 
         ax_phase = Axis(
-            fig[1, 2];
+            f_phase[1, 1];
             ylabel = "CaMKII (μM)",
             xlabel = "CaN (μM)",
             title = "Phase portrait",
@@ -690,7 +787,7 @@ function build_app(; fontsize = 20)
         )
 
         ax_wt = Axis(
-            fig[1, 3];
+            f_wt[1, 1];
             ylabel = "weight change (%)",
             xlabel = "time (s)",
             title = "Synaptic weight",
@@ -704,12 +801,7 @@ function build_app(; fontsize = 20)
         wt_main_color = :steelblue
         wt_overlay_alpha = 0.45
 
-        ax_prog = Axis(fig[2, 1:3]; title = "Progress", height = 16, yticks = [0])
-        pbar_rect = map(p_bar) do x
-            Rect(0.0, 0.0, x, 1.0)
-        end
-        poly!(ax_prog, Rect(0.0, 0.0, 100.0, 1.0); color = :white, strokecolor = :red, strokewidth = 1)
-        poly!(ax_prog, pbar_rect; color = :red)
+
 
         lines!(ax_camk, lift(x -> x.t ./ 1000, plasticity_obs), lift(x -> x.camk2, plasticity_obs); label = "CaMKII")
         lines!(ax_camk, lift(x -> x.t ./ 1000, plasticity_obs), lift(x -> x.can, plasticity_obs); label = "CaN")
@@ -739,8 +831,7 @@ function build_app(; fontsize = 20)
 
         # ── CSS CONSTANTS ─────────────────────────────────────────────────────
         CARD =
-            "background:white;padding:22px;border-radius:10px;" *
-            "box-shadow:0 3px 10px rgba(0,0,0,0.09);margin-bottom:0;"
+            "padding:clamp(12px,3vw,22px);"
         TITLE =
             "margin-top:0;margin-bottom:14px;color:#2c3e50;" *
             "font-family:'Segoe UI',sans-serif;font-size:17px;" *
@@ -943,7 +1034,7 @@ function build_app(; fontsize = 20)
                 ),
                 Bonito.DOM.div(timeline);
 
-                style = CARD * "border-left:4px solid #6c3483;",
+                style = CARD,
             )
         end
 
@@ -1011,7 +1102,7 @@ function build_app(; fontsize = 20)
                     style = "background:#f8f9fa;border-radius:8px;padding:14px;",
                 );
 
-                style = CARD * "border-left:4px solid #1a6b3c;",
+                style = CARD,
             )
         end
 
@@ -1093,7 +1184,7 @@ function build_app(; fontsize = 20)
                     style = "background:#f8f9fa;border-radius:8px;padding:14px;",
                 );
 
-                style = CARD * "border-left:4px solid #b45309;",
+                style = CARD,
             )
         end
 
@@ -1112,14 +1203,14 @@ function build_app(; fontsize = 20)
                     menu_prot,
                     Bonito.DOM.span("  Exp #:", style = "font-weight:bold;font-size:13px;margin-left:10px;"),
                     menu_exp;
-                    style = "display:flex;gap:10px;align-items:center;margin-bottom:14px;",
+                    style = "display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px;",
                 ),
                 Bonito.DOM.div(
                     data_protocol_str;
                     style = "overflow-y:auto;overflow-x:auto;max-height:260px;" *
                             "border:1px solid #ecf0f1;border-radius:8px;",
                 );
-                style = CARD * "border-left:4px solid #2980b9;",
+                style = CARD,
             )
         end
 
@@ -1150,34 +1241,79 @@ function build_app(; fontsize = 20)
         end
 
         on(session, btn_era.value) do _
-            p_bar[] = 0.0
-            plasticity_obs[] = (t = zeros(1), camk2 = zeros(1), can = zeros(1), weight = zeros(1))
-            final_wc[] = "—"
-            all_run_curves[] = []
-            empty!(ax_wt)
-            lines!(
-                ax_wt,
-                lift(x -> x.t ./ 1000, plasticity_obs),
-                lift(x -> x.weight, plasticity_obs);
-                color = wt_main_color,
-                linewidth = 2,
-            )
-            xlims!(ax_wt, 0, 200)
-            ylims!(ax_wt, -150, 150)
+            @async try
+                p_bar[] = 0.0
+                plasticity_obs[] = (t = zeros(1), camk2 = zeros(1), can = zeros(1), weight = zeros(1))
+                final_wc[] = "—"
+                all_run_curves[] = []
+                empty!(ax_wt)
+                lines!(
+                    ax_wt,
+                    lift(x -> x.t ./ 1000, plasticity_obs),
+                    lift(x -> x.weight, plasticity_obs);
+                    color = wt_main_color,
+                    linewidth = 2,
+                )
+                xlims!(ax_wt, 0, 200)
+                ylims!(ax_wt, -150, 150)
+            catch e
+                @error "Erase failed" exception = (e, catch_backtrace())
+            end
         end
 
         on(session, btn_stop.value) do _
-            if isassigned(current_task) && !istaskdone(current_task[])
-                Base.throwto(current_task[], InterruptException())
-                confirm_stop_msg[] = "Simulation stopped — plots preserved."
+            if running[] && isassigned(current_task) && !istaskdone(current_task[])
+                stop_requested[] = true
+                #Base.throwto(current_task[], InterruptException())
+                schedule(current_task[], InterruptException(); error = true) # Partial fix
+                confirm_stop_msg[] = "Simulation stopped - plots preserved."
             else
                 confirm_stop_msg[] = "No simulation running."
             end
             @async (sleep(3); confirm_stop_msg[] = "")
         end
 
+        has_results() = length(plasticity_obs[].t) > 1 || !isempty(batch_results[]) || !isempty(stdp_points[].dt)
+
+        function publish_exports!(paths::AbstractString...)
+            for p in paths
+                pushfirst!(export_entries, (basename(p), register_download(p)))
+            end
+            length(export_entries) > 12 && resize!(export_entries, 12)
+            links = [
+                Bonito.DOM.a(
+                    "⬇ " * name;
+                    href = url,
+                    download = name,
+                    style = "display:block;font-size:13px;color:#2563eb;margin:3px 0;word-break:break-all;",
+                ) for (name, url) in export_entries
+            ]
+            export_links[] = Bonito.DOM.div(links...)
+            export_status[] = "✔ $(length(paths)) file(s) ready - click a link to download."
+        end
+
+        function safe_export(f, label)
+            if running[]
+                error_msg[] = "⚠ Wait for the simulation to finish before exporting."
+                return
+            end
+            if !has_results()
+                error_msg[] = "⚠ Nothing to export yet — run a simulation first."
+                return
+            end
+            error_msg[] = ""
+            export_status[] = "Exporting $label…"
+            try
+                f()
+            catch e
+                export_status[] = ""
+                error_msg[] = "⚠ $label export failed: " * sprint(showerror, e)
+                @error "$label export failed" exception = (e, catch_backtrace())
+            end
+        end
+
         # Export Excel — named by simulation parameters
-        on(session, btn_csv.value) do _
+        function export_excel!()
             obs = plasticity_obs[]
             stem = build_export_name(tab = active_tab[], n_runs = tb_n_runs.value[])
             filename = joinpath(EXPORT_DIR, stem * ".xlsx")
@@ -1299,10 +1435,15 @@ function build_app(; fontsize = 20)
             end
 
             println("Exported → $filename")
+            publish_exports!(filename)
+        end
+
+        on(session, btn_csv.value) do _
+            safe_export(export_excel!, "Excel")
         end
 
         # Export Plots (CairoMakie — server-side PNG rendering)
-        on(session, btn_plt.value) do _
+        function export_plots!()
             obs = plasticity_obs[]
             t_sec = obs.t ./ 1000
             ltp = SynapseParams().LTP_region.vertices
@@ -1341,6 +1482,133 @@ function build_app(; fontsize = 20)
             end
 
             println("Exported to $EXPORT_DIR → $stem*")
+            files = [stem * "_enzymes.png", stem * "_phase.png", stem * "_weight.png"]
+            isempty(stdp_points[].dt) || push!(files, stem * "_stdp.png")
+            publish_exports!((joinpath(EXPORT_DIR, f) for f in files)...)
+        end
+
+        on(session, btn_plt.value) do _
+            safe_export(export_plots!, "Plots")
+        end
+
+        # The elapsed time is a client-side clock: it keeps ticking while the
+        # Julia thread is busy inside the solver and cannot answer the browser.
+        elapsed_span = Bonito.DOM.span("00:00"; class = "se-elapsed")
+        hint_span = Bonito.DOM.div(""; class = "se-hint")
+
+        Bonito.onjs(
+            session,
+            timer_cmd,
+            Bonito.js"""
+            (cmd) => {
+                const el = $(elapsed_span);
+                const hint = $(hint_span);
+                if (window.__seTimer) { clearInterval(window.__seTimer); window.__seTimer = null; }
+                if (!el || !hint) { return; }
+                if (cmd === "start") {
+                    const t0 = Date.now();
+                    window.__seLast = t0;
+                    const pad = (x) => String(x).padStart(2, "0");
+                    const tick = () => {
+                        const s = Math.max(0, Math.floor((Date.now() - t0) / 1000));
+                        const h = Math.floor(s / 3600);
+                        const m = Math.floor((s % 3600) / 60);
+                        el.textContent = (h > 0 ? h + ":" : "") + pad(m) + ":" + pad(s % 60);
+                        const idle = Math.floor((Date.now() - window.__seLast) / 1000);
+                        if (idle >= 8) {
+                            hint.textContent = "Solver busy: no progress report for " + idle + " s (normal during long phases).";
+                            hint.style.display = "block";
+                        } else {
+                            hint.style.display = "none";
+                        }
+                    };
+                    tick();
+                    window.__seTimer = setInterval(tick, 500);
+                } else {
+                    hint.style.display = "none";
+                }
+            }
+            """,
+        )
+        Bonito.onjs(session, p_bar, Bonito.js"(v) => { window.__seLast = Date.now(); }")
+
+        status_banner = Bonito.DOM.div(
+            Bonito.DOM.div(; class = "se-spinner"),
+            Bonito.DOM.div(
+                Bonito.DOM.div(run_title; class = "se-title"),
+                Bonito.DOM.div(pct_text, " · ", run_detail; class = "se-sub"),
+                hint_span,
+                Bonito.DOM.progress(; max = 100, value = p_bar, class = "se-bar");
+                class = "se-main",
+            ),
+            elapsed_span;
+            class = banner_class,
+        )
+
+        run_t0 = Ref(time())
+        batch_t0 = Ref(time())
+
+        # Called by run_batch! before each run.
+        function on_run(i, n)
+            i == 1 && (batch_t0[] = time())
+            run_title[] = n == 1 ? "Simulation running…" : "Simulation running — run $i / $n"
+            if i > 1
+                per_run = (time() - batch_t0[]) / (i - 1)
+                run_detail[] = "≈ $(fmt_elapsed(per_run * (n - i + 1))) remaining (estimated from previous runs)"
+            elseif n > 1
+                run_detail[] = "remaining time estimated after the first run"
+            end
+        end
+
+        # Runs `body` in a background task and keeps the banner / buttons in sync.
+        function launch!(body::Function)
+            if running[]
+                error_msg[] = "⚠ A simulation is already running."
+                return
+            end
+            stop_requested[] = false
+            error_msg[] = ""
+            export_status[] = ""
+            run_t0[] = time()
+            run_title[] = "Simulation running…"
+            run_detail[] = ""
+            run_state[] = "running"
+            running[] = true
+            timer_cmd[] = "start"
+            current_task[] = errormonitor(
+                @async begin
+                    try
+                        sleep(0.3)   # let the websocket deliver the banner before the solver takes the thread
+                        body()
+                        total = fmt_elapsed(time() - run_t0[])
+                        if stop_requested[]
+                            run_state[] = "stopped"
+                            run_title[] = "Simulation stopped"
+                            run_detail[] = "partial results kept — ran for $total"
+                        else
+                            run_state[] = "done"
+                            run_title[] = "Simulation finished"
+                            run_detail[] = "total time $total"
+                        end
+                    catch e
+                        total = fmt_elapsed(time() - run_t0[])
+                        if e isa InterruptException
+                            run_state[] = "stopped"
+                            run_title[] = "Simulation stopped"
+                            run_detail[] = "partial results kept — ran for $total"
+                        else
+                            run_state[] = "error"
+                            run_title[] = "Simulation failed"
+                            run_detail[] = first(sprint(showerror, e), 300)
+                            @error "Simulation failed" exception = (e, catch_backtrace())
+                        end
+                    finally
+                        timer_cmd[] = "stop"
+                        running[] = false
+                    end
+                end
+            )
+            return
         end
 
         # ── RUN callback ──────────────────────────────────────────────────────
@@ -1368,8 +1636,8 @@ function build_app(; fontsize = 20)
                 err != "" && (error_msg[] = err; return)
                 println("▶ Custom — pre=$pre_ts ms  post=$post_ts ms  pulse=$(Int(v_pls))  freq=$v_frq Hz")
 
-                current_task[] = errormonitor(
-                    @async begin
+                launch!(
+                    () -> begin
                         try
                             sim_fn =
                                 () -> begin
@@ -1399,6 +1667,7 @@ function build_app(; fontsize = 20)
                                 batch_results,
                                 all_run_curves,
                                 sim_fn,
+                                on_run = on_run,
                             )
                         catch e
                             e isa InterruptException || rethrow(e)
@@ -1446,8 +1715,8 @@ function build_app(; fontsize = 20)
                     return
                 end
 
-                current_task[] = errormonitor(
-                    @async begin
+                launch!(
+                    () -> begin
                         try
                             start = 0.5e3
 
@@ -1540,6 +1809,7 @@ function build_app(; fontsize = 20)
                                 batch_results,
                                 all_run_curves,
                                 sim_fn,
+                                on_run = on_run,
                             )
 
                         catch e
@@ -1595,8 +1865,8 @@ function build_app(; fontsize = 20)
                     return
                 end
 
-                current_task[] = errormonitor(
-                    @async begin
+                launch!(
+                    () -> begin
                         try
                             start = 0.5e3   # 500 ms initial offset
 
@@ -1703,6 +1973,7 @@ function build_app(; fontsize = 20)
                                 batch_results,
                                 all_run_curves,
                                 sim_fn,
+                                on_run = on_run,
                             )
                             @info "TBS finished"
                         catch e
@@ -1730,8 +2001,8 @@ function build_app(; fontsize = 20)
 
                 v_nruns_prot, err = get_valid_val(tb_n_runs, 1.0, 100.0, "N runs")
                 err != "" && (error_msg[] = err; return)
-                current_task[] = errormonitor(
-                    @async begin
+                launch!(
+                    () -> begin
                         try
                             sim_fn = () -> begin
                                     run_simulation!(p_bar, data, dp, k; plasticity_obs, use_protocol = true)
@@ -1745,6 +2016,7 @@ function build_app(; fontsize = 20)
                                 batch_results,
                                 all_run_curves,
                                 sim_fn,
+                                on_run = on_run,
                             )
                         catch e
                             e isa InterruptException || rethrow(e)
@@ -1757,19 +2029,14 @@ function build_app(; fontsize = 20)
 
         # ── DOM ───────────────────────────────────────────────────────────────
 
-        TAB_BASE =
-            "padding:9px 18px;border:none;border-radius:8px 8px 0 0;" *
-            "font-size:13px;font-weight:600;cursor:pointer;" *
-            "font-family:'Segoe UI',sans-serif;transition:all 0.15s;"
-        TAB_ACTIVE = TAB_BASE * "background:#2c3e50;color:white;"
-        TAB_IDLE = TAB_BASE * "background:#ecf0f1;color:#7f8c8d;"
+
 
         tab_bar = Bonito.DOM.div(
             btn_tab_hfs,
             btn_tab_tbs,
             btn_tab_stdp_manual,
             btn_tab_protocol;
-            style = "display:flex;gap:4px;padding:0 0 0 2px;" * "border-bottom:3px solid #2c3e50;margin-bottom:0;",
+            class = map(t -> "se-tabs on-" * t, active_tab),
         )
 
         tab_content = lift(active_tab) do tab
@@ -1792,6 +2059,8 @@ function build_app(; fontsize = 20)
                 style = "color:#2c3e50;font-family:'Segoe UI',sans-serif;" *
                         "text-align:center;margin-bottom:24px;letter-spacing:1px;",
             ),
+            Bonito.DOM.style(STATUS_CSS),
+            status_banner,
             Bonito.DOM.div(
                 Bonito.DOM.div(
                     btn_run,
@@ -1802,7 +2071,7 @@ function build_app(; fontsize = 20)
                     btn_plt,
                     Bonito.DOM.span("N runs:"; style = "font-size:12px;color:#7f8c8d;margin-left:12px;"),
                     tb_n_runs;
-                    style = "display:flex;gap:8px;align-items:center;",
+                    class = "se-tools",
                 ),
                 Bonito.DOM.div(
                     final_wc;
@@ -1812,7 +2081,12 @@ function build_app(; fontsize = 20)
                 );
                 style = "background:white;padding:14px 20px;border-radius:10px;" *
                         "box-shadow:0 3px 10px rgba(0,0,0,0.09);margin-bottom:14px;" *
-                        "display:flex;justify-content:space-between;align-items:center;",
+                        "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;",
+            ),
+            Bonito.DOM.div(
+                Bonito.DOM.div(export_status; style = "font-size:13px;font-weight:600;color:#2c3e50;"),
+                export_links;
+                style = "min-height:1.2em;margin:0 4px 10px 4px;",
             ),
             Bonito.DOM.div(
                 confirm_stop_msg;
@@ -1826,23 +2100,18 @@ function build_app(; fontsize = 20)
             ),
             Bonito.DOM.div(
                 tab_bar,
-                Bonito.DOM.div(
-                    tab_content;
-                    style = "background:white;border-radius:0 10px 10px 10px;" *
-                            "box-shadow:0 3px 10px rgba(0,0,0,0.09);",
-                );
+                Bonito.DOM.div(tab_content; class = "se-card");
                 style = "margin-bottom:16px;",
             ),
             Bonito.DOM.div(
-                fig;
-                style = "background:white;padding:16px;border-radius:10px;" *
-                        "box-shadow:0 3px 10px rgba(0,0,0,0.09);" *
-                        "display:flex;justify-content:center;",
+                (
+                    Bonito.DOM.div(WGLMakie.WithConfig(f; resize_to = (:parent, nothing)); class = "se-card") for
+                    f in (f_camk, f_phase, f_wt)
+                )...;
+                class = "se-plots",
             );
 
-            style = "background-color:#f0f2f5;padding:32px;" *
-                    "min-height:100vh;box-sizing:border-box;" *
-                    "font-family:'Segoe UI',sans-serif;max-width:1300px;margin:0 auto;",
+            class = "se-page",
         )
     end   # end Bonito.App() do session
     return app
@@ -1857,7 +2126,10 @@ const PORT = parse(Int, get(ENV, "JULIA_PORT", "8081"))
 
 @info "Starting server on $HOST:$PORT"
 app = build_app()
-server = Bonito.Server(app, HOST, PORT; proxy_url = get(ENV, "PUBLIC_URL", "http://localhost:$PORT"))
+const PUBLIC_URL = get(ENV, "PUBLIC_URL", "http://localhost:$PORT")
+DOWNLOAD_BASE_PATH[] = public_base_path(PUBLIC_URL)
+server = Bonito.Server(app, HOST, PORT; proxy_url = PUBLIC_URL)
+Bonito.route!(server, r"^/download/([A-Za-z0-9]{32})/[^/?]+" => download_handler)
 Bonito.HTTPServer.start(server)
 @info "Server started. Press Ctrl+C to stop."
 wait(server)
