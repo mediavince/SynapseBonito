@@ -454,8 +454,7 @@ function format_table(dp, selected_idx = 1)
         fw = i == selected_idx ? "bold" : "normal"
         col = i == selected_idx ? "#1e40af" : "black"
         cells = [
-            Bonito.DOM.td(string(val), style = "padding:6px 8px;border-bottom:1px solid #eef2f7;white-space:nowrap;") for
-            val in row
+            Bonito.DOM.td(string(val), style = "padding:6px 8px;border-bottom:1px solid #eef2f7;white-space:nowrap;") for val in row
         ]
         Bonito.DOM.tr(
             cells...;
@@ -830,8 +829,7 @@ function build_app(; fontsize = 20)
         poly!(ax_phase, Point2f[(P[1], P[2]) for P in SynapseParams().LTD_region.vertices]; color = ("blue", 0.1))
 
         # ── CSS CONSTANTS ─────────────────────────────────────────────────────
-        CARD =
-            "padding:clamp(12px,3vw,22px);"
+        CARD = "padding:clamp(12px,3vw,22px);"
         TITLE =
             "margin-top:0;margin-bottom:14px;color:#2c3e50;" *
             "font-family:'Segoe UI',sans-serif;font-size:17px;" *
@@ -1575,39 +1573,37 @@ function build_app(; fontsize = 20)
             run_state[] = "running"
             running[] = true
             timer_cmd[] = "start"
-            current_task[] = errormonitor(
-                @async begin
-                    try
-                        sleep(0.3)   # let the websocket deliver the banner before the solver takes the thread
-                        body()
-                        total = fmt_elapsed(time() - run_t0[])
-                        if stop_requested[]
-                            run_state[] = "stopped"
-                            run_title[] = "Simulation stopped"
-                            run_detail[] = "partial results kept — ran for $total"
-                        else
-                            run_state[] = "done"
-                            run_title[] = "Simulation finished"
-                            run_detail[] = "total time $total"
-                        end
-                    catch e
-                        total = fmt_elapsed(time() - run_t0[])
-                        if e isa InterruptException
-                            run_state[] = "stopped"
-                            run_title[] = "Simulation stopped"
-                            run_detail[] = "partial results kept — ran for $total"
-                        else
-                            run_state[] = "error"
-                            run_title[] = "Simulation failed"
-                            run_detail[] = first(sprint(showerror, e), 300)
-                            @error "Simulation failed" exception = (e, catch_backtrace())
-                        end
-                    finally
-                        timer_cmd[] = "stop"
-                        running[] = false
+            current_task[] = errormonitor(@async begin
+                try
+                    sleep(0.3)   # let the websocket deliver the banner before the solver takes the thread
+                    body()
+                    total = fmt_elapsed(time() - run_t0[])
+                    if stop_requested[]
+                        run_state[] = "stopped"
+                        run_title[] = "Simulation stopped"
+                        run_detail[] = "partial results kept — ran for $total"
+                    else
+                        run_state[] = "done"
+                        run_title[] = "Simulation finished"
+                        run_detail[] = "total time $total"
                     end
+                catch e
+                    total = fmt_elapsed(time() - run_t0[])
+                    if e isa InterruptException
+                        run_state[] = "stopped"
+                        run_title[] = "Simulation stopped"
+                        run_detail[] = "partial results kept — ran for $total"
+                    else
+                        run_state[] = "error"
+                        run_title[] = "Simulation failed"
+                        run_detail[] = first(sprint(showerror, e), 300)
+                        @error "Simulation failed" exception = (e, catch_backtrace())
+                    end
+                finally
+                    timer_cmd[] = "stop"
+                    running[] = false
                 end
-            )
+            end)
             return
         end
 
@@ -1672,7 +1668,7 @@ function build_app(; fontsize = 20)
                         catch e
                             e isa InterruptException || rethrow(e)
                         end
-                    end
+                    end,
                 )
 
             elseif tab == "hfs"
@@ -1815,7 +1811,7 @@ function build_app(; fontsize = 20)
                         catch e
                             e isa InterruptException || rethrow(e)
                         end
-                    end
+                    end,
                 )
 
             elseif tab == "tbs"
@@ -1979,7 +1975,7 @@ function build_app(; fontsize = 20)
                         catch e
                             e isa InterruptException || rethrow(e)
                         end
-                    end
+                    end,
                 )
 
             elseif tab == "protocol"
@@ -2021,7 +2017,7 @@ function build_app(; fontsize = 20)
                         catch e
                             e isa InterruptException || rethrow(e)
                         end
-                    end
+                    end,
                 )
             end
 
@@ -2098,11 +2094,7 @@ function build_app(; fontsize = 20)
                 style = "color:#e74c3c;font-weight:600;font-size:13px;" *
                         "text-align:center;min-height:1.2em;margin-bottom:10px;",
             ),
-            Bonito.DOM.div(
-                tab_bar,
-                Bonito.DOM.div(tab_content; class = "se-card");
-                style = "margin-bottom:16px;",
-            ),
+            Bonito.DOM.div(tab_bar, Bonito.DOM.div(tab_content; class = "se-card"); style = "margin-bottom:16px;"),
             Bonito.DOM.div(
                 (
                     Bonito.DOM.div(WGLMakie.WithConfig(f; resize_to = (:parent, nothing)); class = "se-card") for
