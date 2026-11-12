@@ -1,9 +1,33 @@
 services:
   synapse_elife_studio:
-    build: .
+    image: synapsebonito:repro
+    init: true
     working_dir: /app
-    volumes:
-      - ./src:/app
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOMAIN: ${DOMAIN:-localhost}
+        NGINX_PORT: ${NGINX_PORT:-8081}
+        JULIA_PORT: ${JULIA_PORT:-8000}
+      #  - SSL_CERT=${SSL_CERT}
+      #  - SSL_KEY=${SSL_KEY}
+    ports:
+      - "${NGINX_PORT}:${NGINX_PORT}"  # HTTPS Dynamic port mapping
+    restart: unless-stopped
     environment:
-      - GKS_WSTYPE=png
-    command: xvfb-run --server-args="-screen 0 1920x1080x24" julia --project=@. app_bonito_vf.jl
+      - TZ=Europe/Paris
+      - JULIA_PROJECT=/app
+      - JULIA_HOST=${JULIA_HOST}
+      - JULIA_PORT=${JULIA_PORT}
+      - NGINX_PORT=${NGINX_PORT}
+      - DOMAIN=${DOMAIN}
+      #  - SSL_CERT=${SSL_CERT}
+      #  - SSL_KEY=${SSL_KEY}
+    volumes:
+      - synapse_exports:/app/exports
+      - ./src:/app/
+      # - ./ssl:/etc/nginx/ssl
+
+volumes:
+  synapse_exports:

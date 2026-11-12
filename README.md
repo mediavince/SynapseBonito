@@ -96,3 +96,148 @@ indent = 4
 margin = 120
 
 Then format_dir("src") will produce consistent output.
+
+
+## Run with Docker Compose
+
+Requirements: Docker Engine with Docker Compose v2, or Docker Desktop.
+
+Edit .env-dist with your preferred variables and save as .env
+
+Run these commands from the repository root:
+
+```shell
+docker compose up -d --build
+docker compose logs -f --tail 50 synapse_elife_studio
+```
+
+Wait for `Server started`, then open http://localhost:8081.
+
+The image uses Julia 1.11.9. Dependencies are installed from
+`src/Project.toml` and `src/Manifest.toml` and precompiled during the build.
+The first build may take several minutes.
+
+Press Ctrl+C to stop following logs; the application keeps running.
+
+### Stop and restart
+
+```shell
+docker compose stop
+docker compose start
+```
+
+To rebuild after changing application files:
+
+```shell
+docker compose up -d --build
+```
+
+Application code is included in the image, so source changes require a rebuild.
+
+### Exported files
+
+The export buttons write Excel and PNG files to `/app/exports`.
+This directory uses the persistent Docker volume `synapse_exports`.
+
+Files are not automatically downloaded by the browser.
+
+To copy exports to the host:
+
+```shell
+mkdir -p exports-recuperes
+docker compose cp synapse_elife_studio:/app/exports/. ./src/exports/
+```
+
+The volume survives container replacement and `docker compose down`.
+Do not use `docker compose down -v` unless you intend to delete the exports.
+
+## Remote deployment
+
+The default Compose configuration exposes the application only on the
+host's loopback address, `127.0.0.1:8081`.
+
+For remote access, configure an HTTPS reverse proxy and set `PUBLIC_URL`
+to the address used by visitors. For example, create a `.env` file in the
+repository root:
+
+```dotenv
+# Example environment variables
+JULIA_ENV=production
+
+# Domain like domain.lan or localhost
+DOMAIN=synapse.example.org
+
+# NGINX Listen Port (exposed to host)
+NGINX_PORT=8081
+
+# Internal port for Julia app
+JULIA_HOST=0.0.0.0
+JULIA_PORT=8000
+
+# SSL Certificates (paths inside the container) uncomment if needed
+#SSL_CERT=/etc/nginx/ssl/cert.pem
+#SSL_KEY=/etc/nginx/ssl/key.pem
+```
+
+Then apply the configuration:
+
+The dockerfile already prepares the required setup with the nginx.conf template that has placeholders to input .env related vars.
+
+```shell
+docker compose up -d --build
+```
+
+The reverse proxy must forward HTTP requests, static assets and WebSocket
+connections to the application. A proxy running directly on the same host
+can forward to `http://127.0.0.1:8081`.
+
+`JULIA_HOST` and `JULIA_PORT` control the listener inside the container.
+`DOMAIN` controls the external address advertised by Bonito.
+
+Using `localhost` as the public URL will not work for remote visitors.
+
+Build and test the image for the target server's CPU architecture.
+Successful testing on a local machine does not validate a remote deployment.
+
+## Run locally without Docker
+
+With Juliaup installed, install the matching Julia version:
+
+```shell
+juliaup add 1.11.9
+```
+
+From the repository root, install dependencies once and launch:
+
+```shell
+cd src
+julia +1.11.9 --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+julia +1.11.9 --project=. app_bonito_vf.jl
+```
+
+Open http://localhost:8081. Stop any Docker instance using this port first.
+
+Repeat dependency installation after changes to Project.toml or Manifest.toml.
+
+## Validation and CI
+
+The GitHub Actions workflow checks formatting, builds the Docker image
+on Linux and checks that the application returns a non-empty HTTP page.
+Application logs are collected, including when the startup check fails.
+
+This HTTP check does not validate browser interactions or simulations.
+
+Before deploying, manually check:
+
+- Graphs appear and controls respond.
+- A simulation completes and displays its results.
+- Excel and PNG exports are generated and can be retrieved.
+- The application works after a restart.
+- Exports survive container replacement.
+
+Multi-user capacity, resource limits, access control and the target
+server's HTTPS/WebSocket configuration require separate validation.
+
+## Nginx build with ssl certs
+
+Ensure the .env (edited from .env-dist) contains ssl vars for https domain; uncomment ssl related lines in docker-compose.yml
